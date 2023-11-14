@@ -17,8 +17,9 @@ readonly dhcpconfig="/etc/dnsmasq.d/02-pihole-dhcp.conf"
 readonly FTLconf="/etc/pihole/pihole-FTL.conf"
 # 03 -> wildcards
 readonly dhcpstaticconfig="/etc/dnsmasq.d/04-pihole-static-dhcp.conf"
-readonly dnscustomfile="/etc/pihole/custom.list"
-readonly dnscustomcnamefile="/etc/dnsmasq.d/05-pihole-custom-cname.conf"
+readonly customdns_a_file="/etc/pihole/custom.list"
+readonly customdns_cname_file="/etc/dnsmasq.d/05-pihole-custom-cname.conf"
+readonly customdns_txt_file="/etc/dnsmasq.d/06-pihole-custom-txt.conf"
 
 readonly gravityDBfile="/etc/pihole/gravity.db"
 
@@ -726,7 +727,7 @@ AddCustomDNSAddress() {
     validHost="$(checkDomain "${host}")"
     if [[ -n "${validHost}" ]]; then
         if valid_ip "${ip}" || valid_ip6 "${ip}" ; then
-            echo "${ip} ${validHost}" >> "${dnscustomfile}"
+            echo "${ip} ${validHost}" >> "${customdns_a_file}"
         else
             echo -e "  ${CROSS} Invalid IP has been passed"
             exit 1
@@ -753,7 +754,7 @@ RemoveCustomDNSAddress() {
     if [[ -n "${validHost}" ]]; then
         if valid_ip "${ip}" || valid_ip6 "${ip}" ; then
             validHost=$(escapeDots "${validHost}")
-            sed -i "/^${ip} ${validHost}$/Id" "${dnscustomfile}"
+            sed -i "/^${ip} ${validHost}$/Id" "${customdns_a_file}"
         else
             echo -e "  ${CROSS} Invalid IP has been passed"
             exit 1
@@ -784,7 +785,7 @@ AddCustomCNAMERecord() {
                 echo "  ${CROSS} Domain and target are the same. This would cause a DNS loop."
                 exit 1
             else
-                echo "cname=${validDomain},${validTarget}" >> "${dnscustomcnamefile}"
+                echo "cname=${validDomain},${validTarget}" >> "${customdns_cname_file}"
             fi
         else
             echo "  ${CROSS} Invalid Target Passed!"
@@ -813,11 +814,54 @@ RemoveCustomCNAMERecord() {
         if [[ -n "${validTarget}" ]]; then
             validDomain=$(escapeDots "${validDomain}")
             validTarget=$(escapeDots "${validTarget}")
-            sed -i "/^cname=${validDomain},${validTarget}$/Id" "${dnscustomcnamefile}"
+            sed -i "/^cname=${validDomain},${validTarget}$/Id" "${customdns_cname_file}"
         else
             echo "  ${CROSS} Invalid Target Passed!"
             exit 1
         fi
+    else
+        echo "  ${CROSS} Invalid Domain passed!"
+        exit 1
+    fi
+
+    # Restart dnsmasq to update removed custom CNAME records only if $reload not false
+    if [[ ! $reload == "false" ]]; then
+        RestartDNS
+    fi
+}
+
+AddCustomDNSTXTRecord(){
+    echo -e "  ${TICK} Adding custom TXT record..."
+
+    domain="${args[2]}"
+    text="${args[3]}"
+    reload="${args[4]}"
+
+    validDomain="$(checkDomain "${domain}")"
+    if [[ -n "${validDomain}" ]]; then
+        echo "txt-record=${validDomain},\"${text}\"" >> "${customdns_txt_file}"
+    else
+        echo "  ${CROSS} Invalid Domain passed!"
+        exit 1
+    fi
+    # Restart dnsmasq to load new custom CNAME records only if reload is not false
+    if [[ ! $reload == "false" ]]; then
+        RestartDNS
+    fi
+}
+
+RemoveCustomDNSTXTRecord(){
+    echo -e "  ${TICK} Removing custom TXT record..."
+
+    domain="${args[2]}"
+    reload="${args[3]}"
+
+    validDomain="$(checkDomain "${domain}")"
+    if [[ -n "${validDomain}" ]]; then
+        validDomain=$(escapeDots "${validDomain}")
+        # As there can only be one TXT record per domain, we can use the domain as the unique identifier
+        # and thus remove the whole line based on just the beginning of the line and not care about the rest
+        sed -i "/^txt-record=${validDomain},\"/Id" "${customdns_txt_file}"
     else
         echo "  ${CROSS} Invalid Domain passed!"
         exit 1
@@ -878,6 +922,8 @@ main() {
         "removecustomdns"     ) RemoveCustomDNSAddress;;
         "addcustomcname"      ) AddCustomCNAMERecord;;
         "removecustomcname"   ) RemoveCustomCNAMERecord;;
+        "addcustomtxt"        ) AddCustomDNSTXTRecord;;
+        "removecustomtxte"    ) RemoveCustomDNSTXTRecord;;
         "ratelimit"           ) SetRateLimit;;
         *                     ) helpFunc;;
     esac
